@@ -12,8 +12,8 @@ def write_routes(routes: dict):
     {
       "control": "http://127.0.0.1:8000/",
       "models": {
-          "54b2e32b": "http://127.0.0.1:42037/",
-          "683b2426": "http://127.0.0.1:45217/"
+          "54b2e32b_v2": "http://127.0.0.1:42037/",
+          "683b2426_v1": "http://127.0.0.1:45217/"
       }
     }
     """
@@ -46,9 +46,9 @@ server {{
 """
 
     # Add model routes
-    for model_id, upstream in model_routes.items():
+    for route_key, upstream in model_routes.items():
         conf += f"""
-    location /m/{model_id}/ {{
+    location /m/{route_key}/ {{
         proxy_pass {upstream};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -60,6 +60,7 @@ server {{
 
     # Write config
     NGINX_SITE_PATH.write_text(conf)
+    print(f"Nginx config written: {NGINX_SITE_PATH}")
 
     # Ensure enabled symlink exists
     if not NGINX_ENABLED_PATH.exists():
@@ -67,4 +68,4 @@ server {{
 
     # Reload nginx safely
     subprocess.run(["sudo", "nginx", "-t"], check=True)
-    subprocess.run(["sudo", "systemctl", "reload", "nginx"], check=True)
+    subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)

@@ -15,6 +15,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS models (
         model_id TEXT PRIMARY KEY,
+        model_name TEXT,
         created_at TEXT,
         active_version INTEGER DEFAULT 1
     )
@@ -45,6 +46,12 @@ def init_db():
         latency_ms REAL
     )
     """)
+
+    # Lightweight migration for existing databases.
+    cur.execute("PRAGMA table_info(models)")
+    model_columns = {row[1] for row in cur.fetchall()}
+    if "model_name" not in model_columns:
+        cur.execute("ALTER TABLE models ADD COLUMN model_name TEXT")
 
 
     conn.commit()

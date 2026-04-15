@@ -648,8 +648,10 @@ async function uploadModel() {
     const r = await fetch(`${API}/upload`, { method: 'POST', body: fd });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Upload failed');
-    toast(`✓ Uploaded "${d.model_name}" (ID: ${d.model_id})`, 'success');
+    toast(`✓ Uploaded model (ID: ${d.model_id})`, 'success');
     status.textContent = `Model ID: ${d.model_id}`;
+    loadModels();
+    populateSelects();
   } catch(e) {
     toast(e.message, 'error');
     status.textContent = '';
@@ -661,7 +663,8 @@ async function loadModels() {
   const tbody = document.getElementById('models-tbody');
   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px"><span class="spinner"></span></td></tr>';
   const r = await fetch(`${API}/models`);
-  const models = await r.json();
+  const payload = await r.json();
+  const models = Array.isArray(payload) ? payload : (payload.models || []);
   if (!models.length) {
     tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⬡</div><p>No models yet.</p></div></td></tr>';
     return;
@@ -669,12 +672,12 @@ async function loadModels() {
   tbody.innerHTML = models.map(m => `
     <tr>
       <td><code style="font-size:11px;color:var(--accent)">${m.model_id}</code></td>
-      <td>${m.name}</td>
-      <td><span class="badge ${m.status==='DEPLOYED'?'badge-green':'badge-yellow'}">${m.status}</span></td>
+      <td>${m.name || m.model_id}</td>
+      <td><span class="badge ${m.active_version ? 'badge-green' : 'badge-yellow'}">${m.active_version ? 'DEPLOYED' : 'UPLOADED'}</span></td>
       <td>${m.active_version ? `v${m.active_version}` : '—'}</td>
       <td>
         <div class="flex-row">
-          <button class="btn btn-danger" style="font-size:11px;padding:5px 10px" onclick="deleteModel('${m.model_id}','${m.name}')">✕ Delete</button>
+          <button class="btn btn-danger" style="font-size:11px;padding:5px 10px" onclick="deleteModel('${m.model_id}','${m.name || m.model_id}')">✕ Delete</button>
         </div>
       </td>
     </tr>
@@ -691,9 +694,10 @@ async function deleteModel(id, name) {
 // ── Populate selects ──────────────────────────────────────────────────────
 async function populateSelects() {
   const r = await fetch(`${API}/models`);
-  const models = await r.json();
+  const payload = await r.json();
+  const models = Array.isArray(payload) ? payload : (payload.models || []);
   const opts = `<option value="">— choose a model —</option>` +
-    models.map(m => `<option value="${m.model_id}">${m.name} (${m.model_id})</option>`).join('');
+    models.map(m => `<option value="${m.model_id}">${m.name || m.model_id} (${m.model_id})</option>`).join('');
   ['deploy-model-select','predict-model-select','metrics-model-select','versions-model-select'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = opts;
@@ -713,9 +717,11 @@ async function deployModel() {
     const r = await fetch(`${API}/deploy/${id}`, { method: 'POST' });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Deploy failed');
-    toast(`🚀 Deployed v${d.version} on port ${d.port}`, 'success');
-    document.getElementById('deploy-endpoint').textContent = d.endpoint;
+    toast(`🚀 Deployed v${d.active_version}`, 'success');
+    document.getElementById('deploy-endpoint').textContent = d.endpoint_predict || '';
     result.style.display = 'block';
+    loadModels();
+    populateSelects();
   } catch(e) {
     toast(e.message, 'error');
   } finally {
@@ -731,10 +737,10 @@ async function loadFeatureInputs() {
   if (!id) { container.innerHTML = ''; return; }
   try {
     const r = await fetch(`${API}/models`);
-    const models = await r.json();
+    const payload = await r.json();
+    const models = Array.isArray(payload) ? payload : (payload.models || []);
     const m = models.find(x => x.model_id === id);
     if (!m) return;
-    const configPath = m.config_path;
     // Fetch config via a small helper endpoint or parse from known shape
     // We'll use the /predict endpoint's 422 to discover features, but better to read config.
     // For now provide a JSON textarea
@@ -773,12 +779,11 @@ async function loadMetrics() {
   if (!id) { toast('Select a model', 'error'); return; }
   const r = await fetch(`${API}/metrics/${id}`);
   const d = await r.json();
+  if (!r.ok) { toast(d.detail || 'Failed to load metrics', 'error'); return; }
   document.getElementById('metrics-stats').style.display = 'grid';
-  document.getElementById('m-total').textContent = d.total_requests;
+  document.getElementById('m-total').textContent = d.requests ?? 0;
   document.getElementById('m-latency').textContent = d.avg_latency_ms || '—';
-  document.getElementById('m-last').textContent = d.last_request
-    ? new Date(d.last_request * 1000).toLocaleTimeString()
-    : '—';
+  document.getElementById('m-last').textContent = '—';
   const tbody = document.getElementById('metrics-tbody');
   if (d.recent?.length) {
     document.getElementById('metrics-table-card').style.display = 'block';
@@ -796,8 +801,9 @@ async function loadMetrics() {
 async function loadVersions() {
   const id = document.getElementById('versions-model-select').value;
   if (!id) { toast('Select a model', 'error'); return; }
-  const r = await fetch(`${API}/versions/${id}`);
-  const versions = await r.json();
+  const r = await fetch(`${API}/models/${id}/versions`);
+  const payload = await r.json();
+  const versions = Array.isArray(payload) ? payload : (payload.versions || []);
   const tbody = document.getElementById('versions-tbody');
   if (!versions.length) {
     tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⎇</div><p>No versions yet.</p></div></td></tr>';

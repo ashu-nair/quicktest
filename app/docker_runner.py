@@ -1,9 +1,20 @@
 import subprocess
 import random
 import socket
-DOCKER_BIN = "/usr/bin/docker"
+import os
+
+DOCKER_BIN = os.getenv("DOCKER_BIN", "docker")
+
+
 def run(cmd, cwd=None):
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"Docker binary not found: {cmd[0]}. "
+            "Install Docker Desktop and ensure `docker` is in PATH, "
+            "or set DOCKER_BIN environment variable."
+        ) from e
     return result.returncode, result.stdout, result.stderr
 
 

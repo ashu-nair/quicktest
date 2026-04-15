@@ -1,16 +1,19 @@
 import uuid
 import shutil
 import zipfile
+import os
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
 import requests
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 
 from app.db import init_db, get_conn
 from app.docker_runner import docker_build, docker_run, docker_stop, get_free_port
 from app.nginx_manager import write_routes
 from fastapi.middleware.cors import CORSMiddleware
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
 def recover_on_startup():
     """
@@ -51,7 +54,8 @@ def recover_on_startup():
 
         try:
             port = get_free_port()
-            container_id = docker_run(image_tag, port, f"/m/{model_id}")
+            route_key = f"{model_id}_v{version}"
+            container_id = docker_run(image_tag, port, f"/m/{route_key}")
 
             # wait for health (same logic as deploy)
             url = f"http://127.0.0.1:{port}/health"
@@ -102,6 +106,7 @@ def recover_on_startup():
 STORAGE_DIR = Path("storage")
 DEPLOYMENTS_DIR = Path("deployments")
 TEMPLATE_DIR = Path("templates/model_api")
+UI_INDEX_PATH = Path(__file__).resolve().parent.parent / "index.html"
 
 STORAGE_DIR.mkdir(exist_ok=True)
 DEPLOYMENTS_DIR.mkdir(exist_ok=True)
@@ -133,23 +138,49 @@ def get_active_routes():
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-    SELECT model_id, internal_port
+    SELECT model_id, version, internal_port
     FROM versions
     WHERE status='RUNNING'
     """)
     rows = cur.fetchall()
     conn.close()
-    return {r[0]: r[1] for r in rows}
+    return {f"{model_id}_v{version}": port for model_id, version, port in rows}
+
+
+def can_manage_nginx() -> bool:
+    # Nginx config management is only expected on Linux hosts.
+    return os.name != "nt" and Path("/etc/nginx/sites-available").exists()
 
 
 def refresh_nginx():
-    routes = get_active_routes()
-    write_routes(routes)
+    if not can_manage_nginx():
+        print("Skipping nginx refresh: unsupported or missing nginx path.")
+        return
+    active_routes = get_active_routes()
+    print(f"Nginx port mappings: {active_routes}")
+    model_routes = {model_id: f"http://127.0.0.1:{port}/" for model_id, port in active_routes.items()}
+    write_routes({
+        "control": "http://127.0.0.1:8000/",
+        "models": model_routes,
+    })
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+@app.get("/")
+def root():
+    if UI_INDEX_PATH.exists():
+        return FileResponse(UI_INDEX_PATH)
+    return {
+        "service": "mlops-control-api",
+        "status": "ok",
+        "health": "/health",
+        "docs": "/docs",
+        "ui_missing": str(UI_INDEX_PATH),
+    }
 
 
 @app.post("/upload")
@@ -158,6 +189,7 @@ async def upload(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Upload must be a ZIP file.")
 
     model_id = str(uuid.uuid4())[:8]
+    model_name = Path(file.filename).stem
     model_dir = STORAGE_DIR / model_id
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,14 +219,14 @@ async def upload(file: UploadFile = File(...)):
     cur = conn.cursor()
 
     cur.execute("""
-    INSERT INTO models(model_id, created_at, active_version)
-    VALUES (?, ?, ?)
-    """, (model_id, datetime.utcnow().isoformat(), 1))
+    INSERT INTO models(model_id, model_name, created_at, active_version)
+    VALUES (?, ?, ?, ?)
+    """, (model_id, model_name, datetime.utcnow().isoformat(), 0))
 
     conn.commit()
     conn.close()
 
-    return {"model_id": model_id, "message": "Uploaded successfully. Now deploy it."}
+    return {"model_id": model_id, "model_name": model_name, "message": "Uploaded successfully. Now deploy it."}
 
 
 @app.post("/deploy/{model_id}")
@@ -209,7 +241,7 @@ def deploy(model_id: str):
         raise HTTPException(status_code=404, detail="Model not found")
 
     active_version = row[0]
-    new_version = active_version + 1 if active_version else 1
+    new_version = active_version + 1 if active_version and active_version > 0 else 1
 
     # prepare deployment folder
     deployment_folder = DEPLOYMENTS_DIR / f"{model_id}_v{new_version}"
@@ -227,8 +259,13 @@ def deploy(model_id: str):
 
 
     storage_model_dir = STORAGE_DIR / model_id
-    model_pkl = next(storage_model_dir.rglob("model.pkl"))
-    config_json = next(storage_model_dir.rglob("model_config.json"))
+    model_pkl = next(storage_model_dir.rglob("model.pkl"), None)
+    config_json = next(storage_model_dir.rglob("model_config.json"), None)
+    if not model_pkl or not config_json:
+        raise HTTPException(
+            status_code=400,
+            detail="Stored model files not found (model.pkl/model_config.json). Please re-upload model ZIP.",
+        )
 
     shutil.copy(model_pkl, deployment_folder / "model/model.pkl")
     shutil.copy(config_json, deployment_folder / "model/model_config.json")
@@ -251,8 +288,9 @@ def deploy(model_id: str):
 
     # run container on a free port
     port = get_free_port()
+    route_key = f"{model_id}_v{new_version}"
     try:
-        container_id = docker_run(image_tag, port, f"/m/{model_id}")
+        container_id = docker_run(image_tag, port, f"/m/{route_key}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Run failed: {str(e)}")
 
@@ -311,12 +349,27 @@ def deploy(model_id: str):
     except Exception as e:
       print("⚠️ Nginx refresh failed:", e)
 
+    endpoint_predict = f"{PUBLIC_BASE_URL}/m/{route_key}/predict"
+    endpoint_docs = f"{PUBLIC_BASE_URL}/m/{route_key}/docs"
+    endpoint_health = f"{PUBLIC_BASE_URL}/m/{route_key}/health"
+    print(f"Generated endpoint: {endpoint_predict}")
+    print(f"Port mapping: {route_key} -> {port}")
+    if can_manage_nginx():
+        try:
+            route_check = requests.get(endpoint_health, timeout=3)
+            print(
+                f"Versioned route health check {endpoint_health}: "
+                f"{route_check.status_code}"
+            )
+        except Exception as e:
+            print(f"Versioned route health check failed: {e}")
+
 
     return {
         "model_id": model_id,
         "active_version": new_version,
-        "endpoint_predict": f"/m/{model_id}/predict",
-        "endpoint_docs": f"/m/{model_id}/docs"
+        "endpoint_predict": endpoint_predict,
+        "endpoint_docs": endpoint_docs
     }
 
 
@@ -347,7 +400,8 @@ def rollback(model_id: str, version: int):
 
     # run selected version
     port = get_free_port()
-    container_id = docker_run(image_tag, port, f"/m/{model_id}")
+    route_key = f"{model_id}_v{version}"
+    container_id = docker_run(image_tag, port, f"/m/{route_key}")
 
     # mark DB
     cur.execute("""
@@ -368,11 +422,14 @@ def rollback(model_id: str, version: int):
     conn.close()
 
     refresh_nginx()
+    endpoint_predict = f"{PUBLIC_BASE_URL}/m/{route_key}/predict"
+    print(f"Generated endpoint: {endpoint_predict}")
+    print(f"Port mapping: {route_key} -> {port}")
 
     return {
         "model_id": model_id,
         "active_version": version,
-        "endpoint_predict": f"/m/{model_id}/predict"
+        "endpoint_predict": endpoint_predict
     }
 @app.get("/models")
 def list_models():
@@ -380,7 +437,7 @@ def list_models():
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT model_id, created_at, active_version
+    SELECT model_id, model_name, created_at, active_version
     FROM models
     ORDER BY created_at DESC
     """)
@@ -388,9 +445,10 @@ def list_models():
     conn.close()
 
     out = []
-    for model_id, created_at, active_version in rows:
+    for model_id, model_name, created_at, active_version in rows:
         out.append({
             "model_id": model_id,
+            "name": model_name or model_id,
             "created_at": created_at,
             "active_version": active_version
         })
