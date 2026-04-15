@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLOps Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #080b10;
+    --surface: #0d1117;
+    --border: #1e2633;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --accent3: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --text: #e2e8f0;
+    --muted: #4a5568;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 32px;
+    height: 60px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(8,11,16,.92);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: -0.5px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 2s infinite; }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0,229,255,.4); }
+    50% { opacity: .7; box-shadow: 0 0 0 6px rgba(0,229,255,0); }
+  }
+
+  .header-badge {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 3px 10px;
+    border-radius: 100px;
+  }
+
+  .layout {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: calc(100vh - 60px);
+  }
+
+  /* SIDEBAR */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(13,17,23,.6);
+  }
+
+  .sidebar-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 4px 12px 8px;
+    margin-top: 12px;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    border: 1px solid transparent;
+    transition: all .15s;
+  }
+  .nav-item:hover { background: rgba(0,229,255,.05); color: var(--text); border-color: var(--border); }
+  .nav-item.active { background: rgba(0,229,255,.08); color: var(--accent); border-color: rgba(0,229,255,.2); }
+  .nav-item .icon { width: 16px; text-align: center; font-size: 14px; }
+
+  /* MAIN */
+  main {
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .page { display: none; flex-direction: column; gap: 24px; }
+  .page.active { display: flex; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+
+  .card-title {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 48px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .2s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(0,229,255,.04); }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-icon { font-size: 32px; margin-bottom: 12px; }
+  .upload-text { font-size: 13px; color: var(--muted); line-height: 1.8; }
+  .upload-text strong { color: var(--text); }
+
+  /* Inputs */
+  input[type=text], textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 100px; }
+
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+
+  .form-group { margin-bottom: 16px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { background: #00b8d4; box-shadow: 0 0 20px rgba(0,229,255,.3); }
+  .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #c53030; }
+  .btn-warn { background: var(--warn); color: #000; }
+  .btn-green { background: var(--accent3); color: #000; }
+  .btn-purple { background: var(--accent2); color: #fff; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px 12px; border-bottom: 1px solid rgba(30,38,51,.6); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(0,229,255,.02); }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-green { background: rgba(16,185,129,.15); color: var(--accent3); border: 1px solid rgba(16,185,129,.3); }
+  .badge-yellow { background: rgba(245,158,11,.12); color: var(--warn); border: 1px solid rgba(245,158,11,.3); }
+  .badge-red { background: rgba(239,68,68,.12); color: var(--danger); border: 1px solid rgba(239,68,68,.3); }
+  .badge-blue { background: rgba(0,229,255,.1); color: var(--accent); border: 1px solid rgba(0,229,255,.25); }
+  .badge-gray { background: rgba(74,85,104,.2); color: var(--muted); border: 1px solid var(--border); }
+
+  /* Stats row */
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .stat-value { font-family: var(--sans); font-size: 28px; font-weight: 800; color: var(--accent); }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* Code block */
+  .code-block {
+    background: #020408;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 12px;
+    color: var(--accent);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.8;
+  }
+
+  /* Toast */
+  #toast {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .toast-item {
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: var(--mono);
+    animation: slideIn .2s ease;
+    max-width: 380px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .toast-success { background: rgba(16,185,129,.9); color: #fff; }
+  .toast-error { background: rgba(239,68,68,.9); color: #fff; }
+  .toast-info { background: rgba(0,229,255,.9); color: #000; }
+
+  @keyframes slideIn {
+    from { transform: translateX(40px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(0,0,0,.3);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Endpoint copy */
+  .endpoint-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #020408;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--accent3);
+  }
+  .endpoint-url { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn { cursor: pointer; color: var(--muted); font-size: 14px; transition: color .15s; flex-shrink: 0; }
+  .copy-btn:hover { color: var(--accent); }
+
+  /* Predict result */
+  #predict-result { display: none; }
+
+  /* Empty state */
+  .empty-state { text-align: center; padding: 48px; color: var(--muted); }
+  .empty-state .em { font-size: 32px; margin-bottom: 12px; }
+  .empty-state p { font-size: 13px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .flex-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .mt-2 { margin-top: 8px; }
+  .mt-3 { margin-top: 16px; }
+  .select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 14px;
+    outline: none;
+    cursor: pointer;
+  }
+  .select:focus { border-color: var(--accent); }
+
+  .section-desc { font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    MLOps<span style="color:var(--muted)">/</span>Platform
+  </div>
+  <div class="header-badge">v1.0 · local</div>
+</header>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-label">Navigation</div>
+    <div class="nav-item active" onclick="goto('upload')">
+      <span class="icon">⬆</span> Upload Model
+    </div>
+    <div class="nav-item" onclick="goto('models')">
+      <span class="icon">⬡</span> Models
+    </div>
+    <div class="nav-item" onclick="goto('deploy')">
+      <span class="icon">🚀</span> Deploy
+    </div>
+    <div class="nav-item" onclick="goto('predict')">
+      <span class="icon">⚡</span> Predict
+    </div>
+    <div class="nav-item" onclick="goto('metrics')">
+      <span class="icon">📊</span> Metrics
+    </div>
+    <div class="nav-item" onclick="goto('versions')">
+      <span class="icon">⎇</span> Versions
+    </div>
+    <div class="sidebar-label">Docs</div>
+    <div class="nav-item" onclick="goto('api')">
+      <span class="icon">⌗</span> API Reference
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main>
+
+    <!-- ── UPLOAD ── -->
+    <section id="page-upload" class="page active">
+      <div class="card">
+        <div class="card-title">⬆ Upload Model Package</div>
+        <p class="section-desc">
+          Package your trained model as a ZIP containing <code>model.pkl</code> and <code>model_config.json</code>, then upload below.
+        </p>
+        <div class="upload-zone" id="dropzone">
+          <input type="file" id="file-input" accept=".zip" />
+          <div class="upload-icon">📦</div>
+          <div class="upload-text">
+            <strong>Drop your ZIP here</strong><br />
+            or click to browse · model.pkl + model_config.json required
+          </div>
+          <div id="file-name" style="margin-top:10px;font-size:12px;color:var(--accent)"></div>
+        </div>
+        <div class="mt-3 flex-row">
+          <button class="btn btn-primary" onclick="uploadModel()">
+            <span>⬆</span> Upload
+          </button>
+          <span id="upload-status" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📋 model_config.json Example</div>
+        <div class="code-block">{
+  "model_name": "Iris Classifier",
+  "features": ["sepal_length", "sepal_width", "petal_length", "petal_width"],
+  "target_classes": ["setosa", "versicolor", "virginica"]
+}</div>
+        <div class="mt-3 card-title" style="margin-bottom:12px">🐍 Create model.pkl Quickly</div>
+        <div class="code-block">from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+import pickle, json, zipfile, os
+
+iris = load_iris()
+clf = RandomForestClassifier().fit(iris.data, iris.target)
+
+with open("model.pkl", "wb") as f:
+    pickle.dump(clf, f)
+
+with open("model_config.json", "w") as f:
+    json.dump({
+        "model_name": "Iris Classifier",
+        "features": list(iris.feature_names),
+        "target_classes": list(iris.target_names)
+    }, f)
+
+with zipfile.ZipFile("iris_model.zip", "w") as z:
+    z.write("model.pkl")
+    z.write("model_config.json")</div>
+      </div>
+    </section>
+
+    <!-- ── MODELS ── -->
+    <section id="page-models" class="page">
+      <div class="card">
+        <div class="card-title" style="justify-content:space-between">
+          ⬡ Uploaded Models
+          <button class="btn btn-secondary" onclick="loadModels()" style="font-size:12px;padding:6px 12px">↻ Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Active Version</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="models-tbody">
+              <tr><td colspan="5"><div class="empty-state"><div class="em">⬡</div><p>No models yet. Upload one first.</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── DEPLOY ── -->
+    <section id="page-deploy" class="page">
+      <div class="card">
+        <div class="card-title">🚀 Deploy a Model</div>
+        <p class="section-desc">Select a model and hit Deploy. The system will build a Docker image and spin up a versioned container automatically.</p>
+        <div class="form-group">
+          <label>Select Model</label>
+          <select class="select" id="deploy-model-select" style="width:100%">
+            <option value="">— choose a model —</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="deployModel()" id="deploy-btn">
+          🚀 Deploy New Version
+        </button>
+        <div id="deploy-result" style="margin-top:16px;display:none">
+          <div class="endpoint-bar">
+            <span class="endpoint-url" id="deploy-endpoint"></span>
+            <span class="copy-btn" onclick="copyEndpoint('deploy-endpoint')">⎘</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PREDICT ── -->
+    <section id="page-predict" class="page">
+      <div class="card">
+        <div class="card-title">⚡ Send Prediction</div>
+        <div class="form-group">
+          <label>Select Model</label>
+          <select class="select" id="predict-model-select" style="width:100%" onchange="loadFeatureInputs()">
+            <option value="">— choose a model —</option>
+          </select>
+        </div>
+        <div id="feature-inputs"></div>
+        <div class="flex-row mt-3">
+          <button class="btn btn-primary" onclick="sendPredict()">⚡ Predict</button>
+        </div>
+      </div>
+
+      <div class="card" id="predict-result">
+        <div class="card-title">📤 Response</div>
+        <div class="code-block" id="predict-output"></div>
+      </div>
+    </section>
+
+    <!-- ── METRICS ── -->
+    <section id="page-metrics" class="page">
+      <div class="form-group" style="display:flex;gap:10px;align-items:flex-end">
+        <div style="flex:1">
+          <label>Select Model</label>
+          <select class="select" id="metrics-model-select" style="width:100%">
+            <option value="">— choose a model —</option>
+          </select>
+        </div>
+        <button class="btn btn-secondary" onclick="loadMetrics()">Load Metrics</button>
+      </div>
+      <div class="stats-row" id="metrics-stats" style="display:none">
+        <div class="stat-card">
+          <div class="stat-label">Total Requests</div>
+          <div class="stat-value" id="m-total">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg Latency</div>
+          <div class="stat-value" id="m-latency">—</div>
+          <div class="stat-sub">milliseconds</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Last Request</div>
+          <div class="stat-value" style="font-size:16px" id="m-last">—</div>
+        </div>
+      </div>
+      <div class="card" id="metrics-table-card" style="display:none">
+        <div class="card-title">Recent Requests</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Time</th><th>Latency (ms)</th></tr></thead>
+            <tbody id="metrics-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── VERSIONS ── -->
+    <section id="page-versions" class="page">
+      <div class="form-group" style="display:flex;gap:10px;align-items:flex-end">
+        <div style="flex:1">
+          <label>Select Model</label>
+          <select class="select" id="versions-model-select" style="width:100%">
+            <option value="">— choose a model —</option>
+          </select>
+        </div>
+        <button class="btn btn-secondary" onclick="loadVersions()">Load Versions</button>
+      </div>
+      <div class="card">
+        <div class="card-title">⎇ Version History</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Version</th><th>Status</th><th>Port</th><th>Container ID</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="versions-tbody">
+              <tr><td colspan="5"><div class="empty-state"><div class="em">⎇</div><p>Select a model to see versions.</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── API REFERENCE ── -->
+    <section id="page-api" class="page">
+      <div class="card">
+        <div class="card-title">⌗ REST API Reference</div>
+        <p class="section-desc">Base URL: <code>http://localhost:8000</code></p>
+        <div id="api-docs"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = 'http://localhost:8000';
+
+// ── Navigation ────────────────────────────────────────────────────────────
+function goto(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(`page-${page}`).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (page === 'models') loadModels();
+  if (page === 'deploy' || page === 'predict' || page === 'metrics' || page === 'versions') populateSelects();
+  if (page === 'api') renderApiDocs();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast-item toast-${type}`;
+  el.innerHTML = `<span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span> ${msg}`;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Upload ────────────────────────────────────────────────────────────────
+const dz = document.getElementById('dropzone');
+const fi = document.getElementById('file-input');
+fi.addEventListener('change', () => {
+  document.getElementById('file-name').textContent = fi.files[0]?.name || '';
+});
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag');
+  fi.files = e.dataTransfer.files;
+  document.getElementById('file-name').textContent = fi.files[0]?.name || '';
+});
+
+async function uploadModel() {
+  if (!fi.files[0]) { toast('Select a ZIP file first', 'error'); return; }
+  const status = document.getElementById('upload-status');
+  status.innerHTML = '<span class="spinner"></span> Uploading…';
+  const fd = new FormData();
+  fd.append('file', fi.files[0]);
+  try {
+    const r = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Upload failed');
+    toast(`✓ Uploaded "${d.model_name}" (ID: ${d.model_id})`, 'success');
+    status.textContent = `Model ID: ${d.model_id}`;
+  } catch(e) {
+    toast(e.message, 'error');
+    status.textContent = '';
+  }
+}
+
+// ── Models ────────────────────────────────────────────────────────────────
+async function loadModels() {
+  const tbody = document.getElementById('models-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px"><span class="spinner"></span></td></tr>';
+  const r = await fetch(`${API}/models`);
+  const models = await r.json();
+  if (!models.length) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⬡</div><p>No models yet.</p></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = models.map(m => `
+    <tr>
+      <td><code style="font-size:11px;color:var(--accent)">${m.model_id}</code></td>
+      <td>${m.name}</td>
+      <td><span class="badge ${m.status==='DEPLOYED'?'badge-green':'badge-yellow'}">${m.status}</span></td>
+      <td>${m.active_version ? `v${m.active_version}` : '—'}</td>
+      <td>
+        <div class="flex-row">
+          <button class="btn btn-danger" style="font-size:11px;padding:5px 10px" onclick="deleteModel('${m.model_id}','${m.name}')">✕ Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deleteModel(id, name) {
+  if (!confirm(`Delete "${name}"? This removes all containers and data.`)) return;
+  const r = await fetch(`${API}/models/${id}`, { method: 'DELETE' });
+  if (r.ok) { toast(`Deleted ${name}`, 'success'); loadModels(); }
+  else toast('Delete failed', 'error');
+}
+
+// ── Populate selects ──────────────────────────────────────────────────────
+async function populateSelects() {
+  const r = await fetch(`${API}/models`);
+  const models = await r.json();
+  const opts = `<option value="">— choose a model —</option>` +
+    models.map(m => `<option value="${m.model_id}">${m.name} (${m.model_id})</option>`).join('');
+  ['deploy-model-select','predict-model-select','metrics-model-select','versions-model-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  });
+}
+
+// ── Deploy ────────────────────────────────────────────────────────────────
+async function deployModel() {
+  const id = document.getElementById('deploy-model-select').value;
+  if (!id) { toast('Select a model', 'error'); return; }
+  const btn = document.getElementById('deploy-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Building…';
+  const result = document.getElementById('deploy-result');
+  result.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/deploy/${id}`, { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Deploy failed');
+    toast(`🚀 Deployed v${d.version} on port ${d.port}`, 'success');
+    document.getElementById('deploy-endpoint').textContent = d.endpoint;
+    result.style.display = 'block';
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🚀 Deploy New Version';
+  }
+}
+
+// ── Predict ───────────────────────────────────────────────────────────────
+async function loadFeatureInputs() {
+  const id = document.getElementById('predict-model-select').value;
+  const container = document.getElementById('feature-inputs');
+  if (!id) { container.innerHTML = ''; return; }
+  try {
+    const r = await fetch(`${API}/models`);
+    const models = await r.json();
+    const m = models.find(x => x.model_id === id);
+    if (!m) return;
+    const configPath = m.config_path;
+    // Fetch config via a small helper endpoint or parse from known shape
+    // We'll use the /predict endpoint's 422 to discover features, but better to read config.
+    // For now provide a JSON textarea
+    container.innerHTML = `
+      <div class="form-group">
+        <label>Feature Input (JSON)</label>
+        <textarea id="predict-json" rows="6" placeholder='{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'></textarea>
+      </div>`;
+  } catch(e) {
+    container.innerHTML = '';
+  }
+}
+
+async function sendPredict() {
+  const id = document.getElementById('predict-model-select').value;
+  if (!id) { toast('Select a model', 'error'); return; }
+  const raw = document.getElementById('predict-json')?.value;
+  let features;
+  try { features = JSON.parse(raw); } catch { toast('Invalid JSON', 'error'); return; }
+  const r = await fetch(`${API}/predict/${id}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ features })
+  });
+  const d = await r.json();
+  const result = document.getElementById('predict-result');
+  result.style.display = 'block';
+  document.getElementById('predict-output').textContent = JSON.stringify(d, null, 2);
+  if (r.ok) toast('Prediction returned ✓', 'success');
+  else toast(d.detail || 'Prediction failed', 'error');
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────
+async function loadMetrics() {
+  const id = document.getElementById('metrics-model-select').value;
+  if (!id) { toast('Select a model', 'error'); return; }
+  const r = await fetch(`${API}/metrics/${id}`);
+  const d = await r.json();
+  document.getElementById('metrics-stats').style.display = 'grid';
+  document.getElementById('m-total').textContent = d.total_requests;
+  document.getElementById('m-latency').textContent = d.avg_latency_ms || '—';
+  document.getElementById('m-last').textContent = d.last_request
+    ? new Date(d.last_request * 1000).toLocaleTimeString()
+    : '—';
+  const tbody = document.getElementById('metrics-tbody');
+  if (d.recent?.length) {
+    document.getElementById('metrics-table-card').style.display = 'block';
+    tbody.innerHTML = d.recent.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${new Date(row.request_time * 1000).toLocaleString()}</td>
+        <td>${row.latency}</td>
+      </tr>
+    `).join('');
+  }
+}
+
+// ── Versions ──────────────────────────────────────────────────────────────
+async function loadVersions() {
+  const id = document.getElementById('versions-model-select').value;
+  if (!id) { toast('Select a model', 'error'); return; }
+  const r = await fetch(`${API}/versions/${id}`);
+  const versions = await r.json();
+  const tbody = document.getElementById('versions-tbody');
+  if (!versions.length) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⎇</div><p>No versions yet.</p></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = versions.map(v => `
+    <tr>
+      <td>v${v.version}</td>
+      <td><span class="badge ${v.status==='RUNNING'?'badge-green':v.status==='STOPPED'?'badge-gray':'badge-yellow'}">${v.status}</span></td>
+      <td>${v.port || '—'}</td>
+      <td><code style="font-size:10px;color:var(--muted)">${(v.container_id||'—').slice(0,12)}</code></td>
+      <td>
+        ${v.status !== 'RUNNING' ? `<button class="btn btn-warn" style="font-size:11px;padding:5px 10px" onclick="rollback('${id}',${v.version})">↩ Rollback</button>` : '<span style="color:var(--accent3);font-size:12px">● Active</span>'}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function rollback(modelId, version) {
+  if (!confirm(`Rollback to v${version}?`)) return;
+  const r = await fetch(`${API}/rollback/${modelId}/${version}`, { method: 'POST' });
+  const d = await r.json();
+  if (r.ok) { toast(`Rolled back to v${version} ✓`, 'success'); loadVersions(); }
+  else toast(d.detail || 'Rollback failed', 'error');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function copyEndpoint(elId) {
+  const text = document.getElementById(elId).textContent;
+  navigator.clipboard.writeText(text);
+  toast('Endpoint copied!', 'success');
+}
+
+// ── API Docs ──────────────────────────────────────────────────────────────
+function renderApiDocs() {
+  const routes = [
+    { method: 'POST', path: '/upload', desc: 'Upload model ZIP (multipart/form-data, field: file)', body: null },
+    { method: 'GET',  path: '/models', desc: 'List all uploaded models', body: null },
+    { method: 'POST', path: '/deploy/{model_id}', desc: 'Build Docker image and deploy a new version', body: null },
+    { method: 'GET',  path: '/versions/{model_id}', desc: 'List all versions for a model', body: null },
+    { method: 'POST', path: '/predict/{model_id}', desc: 'Send prediction request to active version', body: '{"features": {"sepal_length": 5.1, ...}}' },
+    { method: 'GET',  path: '/metrics/{model_id}', desc: 'Get request count, avg latency, history', body: null },
+    { method: 'POST', path: '/rollback/{model_id}/{version}', desc: 'Rollback to a specific version', body: null },
+    { method: 'DELETE', path: '/models/{model_id}', desc: 'Delete model, all containers and data', body: null },
+  ];
+  const colors = { GET:'#10b981', POST:'#00e5ff', DELETE:'#ef4444' };
+  document.getElementById('api-docs').innerHTML = routes.map(r => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px">
+      <div class="flex-row" style="margin-bottom:6px">
+        <span style="font-weight:700;color:${colors[r.method]||'#aaa'};font-size:12px;min-width:60px">${r.method}</span>
+        <code style="color:var(--text);font-size:13px">${r.path}</code>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">${r.desc}</div>
+      ${r.body ? `<div class="code-block" style="margin-top:10px;font-size:11px">${r.body}</div>` : ''}
+    </div>
+  `).join('');
+}
+</script>
+</body>
+</html>
