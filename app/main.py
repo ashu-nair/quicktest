@@ -753,7 +753,7 @@ def list_versions(model_id: str):
 
 
 # Proxy routes for deployed model endpoints (when nginx is not available)
-from fastapi import Request
+from fastapi import Request, Response
 
 @app.api_route("/m/{model_id}_v{version}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_model_endpoint(model_id: str, version: int, path: str, request: Request):
@@ -794,7 +794,13 @@ async def proxy_model_endpoint(model_id: str, version: int, path: str, request: 
         else:
             r = requests.request(method, target_url, timeout=10)
         
-        return r.json() if r.headers.get('content-type', '').startswith('application/json') else {"response": r.text}
+        # Return response with proper content type
+        content_type = r.headers.get('content-type', '')
+        if content_type.startswith('application/json'):
+            return r.json()
+        else:
+            # Return HTML, text, etc. as-is with proper content type
+            return Response(content=r.text, media_type=content_type, status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Proxy error: {str(e)}")
 
