@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import time
 import os
-from typing import Any
+from typing import Any, Optional
 
 MODEL_PATH = Path("/model/model.pkl")
 CONFIG_PATH = Path("/model/model_config.json")
@@ -17,9 +17,9 @@ app = FastAPI(title="Deployed Model API", root_path=ROOT_PATH)
 
 
 class PredictRequest(BaseModel):
-    features: Any | None = None
+    features: Optional[Any] = None
     # Backward-compatible fallback for older clients.
-    data: Any | None = None
+    data: Optional[Any] = None
 
 
 def load_model():
