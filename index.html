@@ -325,6 +325,22 @@
   .copy-btn { cursor: pointer; color: var(--muted); font-size: 14px; transition: color .15s; flex-shrink: 0; }
   .copy-btn:hover { color: var(--accent); }
 
+  /* Ngrok URL Banner */
+  .ngrok-banner {
+    background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+    border-bottom: 1px solid var(--accent);
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--accent3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .ngrok-banner a { color: var(--accent); text-decoration: none; }
+  .ngrok-banner a:hover { text-decoration: underline; }
+  .ngrok-banner .status { color: var(--accent2); }
+
   /* Predict result */
   #predict-result { display: none; }
 
@@ -358,6 +374,13 @@
 </style>
 </head>
 <body>
+
+<!-- Ngrok URL Banner -->
+<div class="ngrok-banner" id="ngrok-banner" style="display:none">
+  <span>🌐 Public URL:</span>
+  <a href="#" id="ngrok-url" target="_blank">Loading...</a>
+  <span class="status" id="ngrok-status">● Live</span>
+</div>
 
 <header>
   <div class="logo">
@@ -591,7 +614,7 @@ with zipfile.ZipFile("iris_model.zip", "w") as z:
     <section id="page-api" class="page">
       <div class="card">
         <div class="card-title">⌗ REST API Reference</div>
-        <p class="section-desc">Base URL: <code>http://localhost:8000</code></p>
+        <p class="section-desc">Base URL: <code id="api-base-url">/</code></p>
         <div id="api-docs"></div>
       </div>
     </section>
@@ -602,7 +625,42 @@ with zipfile.ZipFile("iris_model.zip", "w") as z:
 <div id="toast"></div>
 
 <script>
-const API = 'http://localhost:8000';
+// Dynamic API URL - will be updated after fetching public-url
+let API = '';
+let apiUrlReady = false;
+
+// Fetch public URL on startup (ngrok if available, else use relative)
+async function initApiUrl() {
+  // Always use relative URLs (same origin) to avoid CORS issues
+  // when ngrok URL changes after server restart
+  API = '';
+  console.log('Using relative API path (same origin)');
+  const baseUrlEl = document.getElementById('api-base-url');
+  if (baseUrlEl) baseUrlEl.textContent = window.location.origin;
+  
+  // Fetch and display ngrok URL in banner
+  try {
+    const r = await fetch('/public-url');
+    if (r.ok) {
+      const data = await r.json();
+      if (data.public_url && data.public_url.includes('ngrok')) {
+        const banner = document.getElementById('ngrok-banner');
+        const urlLink = document.getElementById('ngrok-url');
+        if (banner && urlLink) {
+          urlLink.textContent = data.public_url;
+          urlLink.href = data.public_url;
+          banner.style.display = 'flex';
+          console.log('Ngrok URL:', data.public_url);
+        }
+      }
+    }
+  } catch (e) {
+    console.log('Could not fetch ngrok URL:', e.message);
+  }
+  
+  apiUrlReady = true;
+}
+const apiUrlPromise = initApiUrl();
 
 // ── Navigation ────────────────────────────────────────────────────────────
 function goto(page) {
@@ -639,6 +697,7 @@ dz.addEventListener('drop', e => {
 });
 
 async function uploadModel() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   if (!fi.files[0]) { toast('Select a ZIP file first', 'error'); return; }
   const status = document.getElementById('upload-status');
   status.innerHTML = '<span class="spinner"></span> Uploading…';
@@ -660,31 +719,43 @@ async function uploadModel() {
 
 // ── Models ────────────────────────────────────────────────────────────────
 async function loadModels() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const tbody = document.getElementById('models-tbody');
-  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px"><span class="spinner"></span></td></tr>';
-  const r = await fetch(`${API}/models`);
-  const payload = await r.json();
-  const models = Array.isArray(payload) ? payload : (payload.models || []);
-  if (!models.length) {
-    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⬡</div><p>No models yet.</p></div></td></tr>';
-    return;
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px"><span class="spinner"></span> Loading...</td></tr>';
+  
+  try {
+    const r = await fetch(`${API}/models`);
+    if (!r.ok) {
+      const error = await r.text();
+      throw new Error(`HTTP ${r.status}: ${error}`);
+    }
+    const payload = await r.json();
+    const models = Array.isArray(payload) ? payload : (payload.models || []);
+    if (!models.length) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="em">⬡</div><p>No models yet. Upload one first.</p></div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = models.map(m => `
+      <tr>
+        <td><code style="font-size:11px;color:var(--accent)">${m.model_id}</code></td>
+        <td>${m.name || m.model_id}</td>
+        <td><span class="badge ${m.active_version ? 'badge-green' : 'badge-yellow'}">${m.active_version ? 'DEPLOYED' : 'UPLOADED'}</span></td>
+        <td>${m.active_version ? `v${m.active_version}` : '—'}</td>
+        <td>
+          <div class="flex-row">
+            <button class="btn btn-danger" style="font-size:11px;padding:5px 10px" onclick="deleteModel('${m.model_id}','${m.name || m.model_id}')">✕ Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="em">⚠</div><p>Error loading models:<br>${e.message}</p><button class="btn btn-secondary" onclick="loadModels()" style="margin-top:10px">↻ Retry</button></div></td></tr>`;
+    console.error('loadModels error:', e);
   }
-  tbody.innerHTML = models.map(m => `
-    <tr>
-      <td><code style="font-size:11px;color:var(--accent)">${m.model_id}</code></td>
-      <td>${m.name || m.model_id}</td>
-      <td><span class="badge ${m.active_version ? 'badge-green' : 'badge-yellow'}">${m.active_version ? 'DEPLOYED' : 'UPLOADED'}</span></td>
-      <td>${m.active_version ? `v${m.active_version}` : '—'}</td>
-      <td>
-        <div class="flex-row">
-          <button class="btn btn-danger" style="font-size:11px;padding:5px 10px" onclick="deleteModel('${m.model_id}','${m.name || m.model_id}')">✕ Delete</button>
-        </div>
-      </td>
-    </tr>
-  `).join('');
 }
 
 async function deleteModel(id, name) {
+  await apiUrlPromise; // Wait for API URL to be initialized
   if (!confirm(`Delete "${name}"? This removes all containers and data.`)) return;
   const r = await fetch(`${API}/models/${id}`, { method: 'DELETE' });
   if (r.ok) { toast(`Deleted ${name}`, 'success'); loadModels(); }
@@ -693,19 +764,27 @@ async function deleteModel(id, name) {
 
 // ── Populate selects ──────────────────────────────────────────────────────
 async function populateSelects() {
-  const r = await fetch(`${API}/models`);
-  const payload = await r.json();
-  const models = Array.isArray(payload) ? payload : (payload.models || []);
-  const opts = `<option value="">— choose a model —</option>` +
-    models.map(m => `<option value="${m.model_id}">${m.name || m.model_id} (${m.model_id})</option>`).join('');
-  ['deploy-model-select','predict-model-select','metrics-model-select','versions-model-select'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = opts;
-  });
+  await apiUrlPromise; // Wait for API URL to be initialized
+  try {
+    const r = await fetch(`${API}/models`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const payload = await r.json();
+    const models = Array.isArray(payload) ? payload : (payload.models || []);
+    const opts = `<option value="">— choose a model —</option>` +
+      models.map(m => `<option value="${m.model_id}">${m.name || m.model_id} (${m.model_id})</option>`).join('');
+    ['deploy-model-select','predict-model-select','metrics-model-select','versions-model-select'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = opts;
+    });
+  } catch (e) {
+    console.error('populateSelects error:', e);
+    // Don't clear existing options on error, just log it
+  }
 }
 
 // ── Deploy ────────────────────────────────────────────────────────────────
 async function deployModel() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const id = document.getElementById('deploy-model-select').value;
   if (!id) { toast('Select a model', 'error'); return; }
   const btn = document.getElementById('deploy-btn');
@@ -732,6 +811,7 @@ async function deployModel() {
 
 // ── Predict ───────────────────────────────────────────────────────────────
 async function loadFeatureInputs() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const id = document.getElementById('predict-model-select').value;
   const container = document.getElementById('feature-inputs');
   if (!id) { container.innerHTML = ''; return; }
@@ -755,6 +835,7 @@ async function loadFeatureInputs() {
 }
 
 async function sendPredict() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const id = document.getElementById('predict-model-select').value;
   if (!id) { toast('Select a model', 'error'); return; }
   const raw = document.getElementById('predict-json')?.value;
@@ -775,6 +856,7 @@ async function sendPredict() {
 
 // ── Metrics ───────────────────────────────────────────────────────────────
 async function loadMetrics() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const id = document.getElementById('metrics-model-select').value;
   if (!id) { toast('Select a model', 'error'); return; }
   const r = await fetch(`${API}/metrics/${id}`);
@@ -799,6 +881,7 @@ async function loadMetrics() {
 
 // ── Versions ──────────────────────────────────────────────────────────────
 async function loadVersions() {
+  await apiUrlPromise; // Wait for API URL to be initialized
   const id = document.getElementById('versions-model-select').value;
   if (!id) { toast('Select a model', 'error'); return; }
   const r = await fetch(`${API}/models/${id}/versions`);
@@ -812,17 +895,21 @@ async function loadVersions() {
   tbody.innerHTML = versions.map(v => `
     <tr>
       <td>v${v.version}</td>
-      <td><span class="badge ${v.status==='RUNNING'?'badge-green':v.status==='STOPPED'?'badge-gray':'badge-yellow'}">${v.status}</span></td>
+      <td>
+        <span class="badge ${v.is_active ? 'badge-green' : v.status==='STOPPED' ? 'badge-gray' : 'badge-yellow'}">${v.is_active ? 'ACTIVE' : v.status}</span>
+        ${v.is_active ? '<span style="color:var(--accent3);font-size:12px;margin-left:8px">● Current</span>' : ''}
+      </td>
       <td>${v.port || '—'}</td>
       <td><code style="font-size:10px;color:var(--muted)">${(v.container_id||'—').slice(0,12)}</code></td>
       <td>
-        ${v.status !== 'RUNNING' ? `<button class="btn btn-warn" style="font-size:11px;padding:5px 10px" onclick="rollback('${id}',${v.version})">↩ Rollback</button>` : '<span style="color:var(--accent3);font-size:12px">● Active</span>'}
+        ${!v.is_active ? `<button class="btn btn-warn" style="font-size:11px;padding:5px 10px" onclick="rollback('${id}',${v.version})">↩ Rollback</button>` : '<span style="color:var(--accent3);font-size:12px">✓ Active</span>'}
       </td>
     </tr>
   `).join('');
 }
 
 async function rollback(modelId, version) {
+  await apiUrlPromise; // Wait for API URL to be initialized
   if (!confirm(`Rollback to v${version}?`)) return;
   const r = await fetch(`${API}/rollback/${modelId}/${version}`, { method: 'POST' });
   const d = await r.json();

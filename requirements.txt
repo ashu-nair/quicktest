@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+numpy
+scikit-learn
+joblib
+# Optional: For local development with ngrok (not needed on Azure)
+pyngrok

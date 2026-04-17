@@ -11,9 +11,81 @@ from fastapi.responses import FileResponse
 
 from app.db import init_db, get_conn
 from app.docker_runner import docker_build, docker_run, docker_stop, get_free_port
-from app.nginx_manager import write_routes
+from app.nginx_manager import write_routes, can_manage_nginx
+from app.config import IS_AZURE, USE_NGROK, PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL
 from fastapi.middleware.cors import CORSMiddleware
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+
+# ngrok integration (only for local development)
+if USE_NGROK:
+    from pyngrok import ngrok
+else:
+    ngrok = None
+
+PUBLIC_BASE_URL = CFG_PUBLIC_BASE_URL
+GLOBAL_PUBLIC_URL = PUBLIC_BASE_URL  # Will be updated with ngrok URL if available
+
+
+def start_ngrok_tunnel():
+    """
+    Start ngrok tunnel on port 8000 and return the public URL.
+    Falls back to localhost if ngrok fails.
+    """
+    global GLOBAL_PUBLIC_URL
+    
+    # Skip ngrok on Azure or if explicitly disabled
+    if not USE_NGROK or ngrok is None:
+        print(f"📡 Running on Azure: {PUBLIC_BASE_URL}")
+        GLOBAL_PUBLIC_URL = PUBLIC_BASE_URL
+        return PUBLIC_BASE_URL
+    
+    try:
+        # Kill any existing ngrok processes first
+        import subprocess
+        subprocess.run(["taskkill", "/F", "/IM", "ngrok.exe"], capture_output=True)
+
+        # Check for authtoken in environment variable first
+        import os
+        ngrok_token = os.getenv("NGROK_AUTHTOKEN")
+        if ngrok_token:
+            print("Using NGROK_AUTHTOKEN from environment")
+            ngrok.set_auth_token(ngrok_token)
+        else:
+            # Try to read from ngrok CLI config
+            config_paths = [
+                Path.home() / ".ngrok2/ngrok.yml",  # v2 default
+                Path.home() / "AppData/Local/ngrok/ngrok.yml",  # Windows v3
+                Path.home() / ".config/ngrok/ngrok.yml",  # Linux/mac
+            ]
+
+            for config_path in config_paths:
+                if config_path.exists():
+                    print(f"Checking ngrok config: {config_path}")
+                    content = config_path.read_text()
+                    # Parse YAML-like format for authtoken
+                    for line in content.split("\n"):
+                        line = line.strip()
+                        if line.startswith("authtoken:") or line.startswith("token:"):
+                            token = line.split(":", 1)[1].strip().strip('"').strip("'")
+                            if token and token not in ['null', '~', '']:
+                                ngrok.set_auth_token(token)
+                                print("✅ Auth token loaded from config")
+                                break
+                    break
+
+        # Connect with explicit parameters
+        tunnel = ngrok.connect(addr="8000", proto="http", bind_tls=True)
+        public_url = tunnel.public_url
+        GLOBAL_PUBLIC_URL = public_url
+        print(f"✅ ngrok tunnel started: {public_url}")
+        return public_url
+    except Exception as e:
+        print(f"⚠️ ngrok tunnel failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"⚠️ Falling back to: {PUBLIC_BASE_URL}")
+        GLOBAL_PUBLIC_URL = PUBLIC_BASE_URL
+        return PUBLIC_BASE_URL
+
 
 def recover_on_startup():
     """
@@ -23,10 +95,10 @@ def recover_on_startup():
     conn = get_conn()
     cur = conn.cursor()
 
-    # Mark everything as STOPPED first (since docker doesn't persist)
+    # Mark everything as STOPPED and inactive first (since docker doesn't persist)
     cur.execute("""
     UPDATE versions
-    SET status='STOPPED', container_id=NULL
+    SET status='STOPPED', container_id=NULL, is_active=0
     WHERE status='RUNNING'
     """)
 
@@ -84,7 +156,7 @@ def recover_on_startup():
 
             cur.execute("""
             UPDATE versions
-            SET status='RUNNING', internal_port=?, container_id=?, error_log=NULL
+            SET status='RUNNING', internal_port=?, container_id=?, error_log=NULL, is_active=1
             WHERE model_id=? AND version=?
             """, (port, container_id, model_id, version))
 
@@ -125,7 +197,13 @@ app.add_middleware(
 def startup():
     init_db()
 
+    # Start ngrok tunnel in background
     def bg():
+        try:
+            start_ngrok_tunnel()
+        except Exception as e:
+            print("ngrok startup failed:", e)
+
         try:
             recover_on_startup()
         except Exception as e:
@@ -140,16 +218,11 @@ def get_active_routes():
     cur.execute("""
     SELECT model_id, version, internal_port
     FROM versions
-    WHERE status='RUNNING'
+    WHERE is_active=1
     """)
     rows = cur.fetchall()
     conn.close()
     return {f"{model_id}_v{version}": port for model_id, version, port in rows}
-
-
-def can_manage_nginx() -> bool:
-    # Nginx config management is only expected on Linux hosts.
-    return os.name != "nt" and Path("/etc/nginx/sites-available").exists()
 
 
 def refresh_nginx():
@@ -168,6 +241,12 @@ def refresh_nginx():
 @app.get("/health")
 def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+@app.get("/public-url")
+def get_public_url():
+    """Returns the public URL (ngrok if available, otherwise localhost)."""
+    return {"public_url": GLOBAL_PUBLIC_URL}
 
 
 @app.get("/")
@@ -270,29 +349,49 @@ def deploy(model_id: str):
     shutil.copy(model_pkl, deployment_folder / "model/model.pkl")
     shutil.copy(config_json, deployment_folder / "model/model_config.json")
 
-    image_tag = f"mlops-{model_id}:v{new_version}"
-
-    # build docker image
-    try:
-        docker_build(str(deployment_folder), image_tag)
-    except Exception as e:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-        INSERT INTO versions(model_id, version, status, folder_path, image_tag, container_id, internal_port, created_at, error_log)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (model_id, new_version, "FAILED", str(deployment_folder), image_tag, "", 0, datetime.utcnow().isoformat(), str(e)))
-        conn.commit()
-        conn.close()
-        raise HTTPException(status_code=500, detail=f"Build failed: {str(e)}")
-
-    # run container on a free port
+    # Check if Docker is available (not available on Azure B1 Linux runtime)
+    from app.model_runner import is_docker_available
+    use_docker = is_docker_available()
+    
+    # Get free port for the model
     port = get_free_port()
     route_key = f"{model_id}_v{new_version}"
-    try:
-        container_id = docker_run(image_tag, port, f"/m/{route_key}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Run failed: {str(e)}")
+    
+    if use_docker:
+        # === DOCKER MODE (Local development) ===
+        import re
+        safe_model_id = re.sub(r'[^a-z0-9_.-]', '-', model_id.lower())
+        image_tag = f"mlops-{safe_model_id}:v{new_version}"
+        
+        from app.docker_runner import DOCKER_BIN, docker_build, docker_run
+        print(f"Using Docker: {DOCKER_BIN}")
+        try:
+            docker_build(str(deployment_folder), image_tag)
+        except Exception as e:
+            conn = get_conn()
+            cur = conn.cursor()
+            error_msg = str(e)
+            cur.execute("""
+            INSERT INTO versions(model_id, version, status, folder_path, image_tag, container_id, internal_port, created_at, error_log)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (model_id, new_version, "FAILED", str(deployment_folder), image_tag, "", 0, datetime.utcnow().isoformat(), error_msg))
+            conn.commit()
+            conn.close()
+            raise HTTPException(status_code=500, detail=f"Docker build failed:\n{error_msg}\n\nDocker binary: {DOCKER_BIN}")
+
+        try:
+            container_id = docker_run(image_tag, port, f"/m/{route_key}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Run failed: {str(e)}")
+    else:
+        # === SUBPROCESS MODE (Azure deployment) ===
+        print("Docker not available, using subprocess mode")
+        from app.model_runner import start_model_process
+        try:
+            process = start_model_process(str(deployment_folder), port)
+            container_id = f"process-{process.pid}"  # Use PID as container ID
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Process start failed: {str(e)}")
 
     # test model endpoint
         # test model endpoint (retry because container may take time to start)
@@ -313,33 +412,49 @@ def deploy(model_id: str):
         time.sleep(1)
 
     if not ok:
-        docker_stop(container_id)
+        # Stop based on mode
+        if use_docker:
+            from app.docker_runner import docker_stop
+            docker_stop(container_id)
+        else:
+            from app.model_runner import stop_model_process
+            stop_model_process(container_id)
         raise HTTPException(status_code=500, detail=f"Container test failed: {last_err}")
 
 
     # stop previous running version (rollback-friendly)
     cur.execute("""
-    SELECT container_id FROM versions
+    SELECT container_id, folder_path FROM versions
     WHERE model_id=? AND status='RUNNING'
     """, (model_id,))
     prev = cur.fetchone()
     if prev and prev[0]:
-        docker_stop(prev[0])
+        prev_container_id = prev[0]
+        if use_docker:
+            from app.docker_runner import docker_stop
+            docker_stop(prev_container_id)
+        else:
+            from app.model_runner import stop_model_process
+            stop_model_process(prev_container_id)
 
-    # update DB: mark new version running
+    # update DB: mark new version running and active
     cur.execute("""
     UPDATE models SET active_version=? WHERE model_id=?
     """, (new_version, model_id))
 
+    # Deactivate all versions for this model
     cur.execute("""
-    UPDATE versions SET status='STOPPED'
+    UPDATE versions SET status='STOPPED', is_active=0
     WHERE model_id=? AND status='RUNNING'
     """, (model_id,))
 
+    # Insert new version as active
+    # For subprocess mode, image_tag is the folder path
+    tag_for_db = image_tag if use_docker else str(deployment_folder)
     cur.execute("""
-    INSERT INTO versions(model_id, version, status, folder_path, image_tag, container_id, internal_port, created_at, error_log)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (model_id, new_version, "RUNNING", str(deployment_folder), image_tag, container_id, port, datetime.utcnow().isoformat(), ""))
+    INSERT INTO versions(model_id, version, status, folder_path, image_tag, container_id, internal_port, created_at, error_log, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (model_id, new_version, "RUNNING", str(deployment_folder), tag_for_db, container_id, port, datetime.utcnow().isoformat(), "", 1))
 
     conn.commit()
     conn.close()
@@ -349,9 +464,9 @@ def deploy(model_id: str):
     except Exception as e:
       print("⚠️ Nginx refresh failed:", e)
 
-    endpoint_predict = f"{PUBLIC_BASE_URL}/m/{route_key}/predict"
-    endpoint_docs = f"{PUBLIC_BASE_URL}/m/{route_key}/docs"
-    endpoint_health = f"{PUBLIC_BASE_URL}/m/{route_key}/health"
+    endpoint_predict = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/predict"
+    endpoint_docs = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/docs"
+    endpoint_health = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/health"
     print(f"Generated endpoint: {endpoint_predict}")
     print(f"Port mapping: {route_key} -> {port}")
     if can_manage_nginx():
@@ -375,44 +490,147 @@ def deploy(model_id: str):
 
 @app.post("/rollback/{model_id}/{version}")
 def rollback(model_id: str, version: int):
+    from app.model_runner import is_docker_available
+    use_docker = is_docker_available()
+    
     conn = get_conn()
     cur = conn.cursor()
 
+    # Validate model_id exists
+    cur.execute("SELECT model_id FROM models WHERE model_id=?", (model_id,))
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Validate version exists and get its details
     cur.execute("""
-    SELECT image_tag FROM versions
-    WHERE model_id=? AND version=? AND status IN ('RUNNING','STOPPED')
+    SELECT image_tag, is_active, internal_port, container_id, status, folder_path
+    FROM versions
+    WHERE model_id=? AND version=?
     """, (model_id, version))
     row = cur.fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Requested version not found")
 
-    image_tag = row[0]
+    image_tag, is_active, existing_port, existing_container_id, version_status, folder_path = row
 
-    # stop current
+    # Check if version is already active
+    if is_active:
+        conn.close()
+        return {
+            "model_id": model_id,
+            "rolled_back_to": version,
+            "status": "already_active",
+            "message": f"Version {version} is already the active version"
+        }
+
+    # Get current active version info (for potential rollback on failure)
     cur.execute("""
-    SELECT container_id FROM versions
-    WHERE model_id=? AND status='RUNNING'
+    SELECT version, container_id, internal_port, image_tag, folder_path
+    FROM versions
+    WHERE model_id=? AND is_active=1
     """, (model_id,))
-    current = cur.fetchone()
-    if current and current[0]:
-        docker_stop(current[0])
+    current_active = cur.fetchone()
 
-    # run selected version
-    port = get_free_port()
+    # Stop current active container/process if exists
+    if current_active:
+        current_version, current_container_id, _, _, _ = current_active
+        if current_container_id:
+            try:
+                if use_docker:
+                    docker_stop(current_container_id)
+                else:
+                    from app.model_runner import stop_model_process
+                    stop_model_process(current_container_id)
+                print(f"Stopped version {current_version}")
+            except Exception as e:
+                print(f"Warning: Failed to stop {current_container_id}: {e}")
+
+    # Determine port: reuse if version was previously running, otherwise get new port
+    if version_status == 'RUNNING' and existing_port:
+        port = existing_port
+    else:
+        port = get_free_port()
+
     route_key = f"{model_id}_v{version}"
-    container_id = docker_run(image_tag, port, f"/m/{route_key}")
+    new_container_id = None
 
-    # mark DB
+    try:
+        # Start selected version (Docker or subprocess)
+        if use_docker:
+            new_container_id = docker_run(image_tag, port, f"/m/{route_key}")
+        else:
+            from app.model_runner import start_model_process
+            process = start_model_process(folder_path, port)
+            new_container_id = f"process-{process.pid}"
+
+        # Test health before committing changes
+        url = f"http://127.0.0.1:{port}/health"
+        ok = False
+        last_err = ""
+        for _ in range(15):
+            try:
+                r = requests.get(url, timeout=2)
+                if r.status_code == 200:
+                    ok = True
+                    break
+            except Exception as e:
+                last_err = str(e)
+            import time
+            time.sleep(1)
+
+        if not ok:
+            raise RuntimeError(f"Health check failed: {last_err}")
+
+    except Exception as e:
+        # Container/process failed - rollback the change
+        print(f"Rollback failed for version {version}: {e}")
+
+        if new_container_id:
+            try:
+                if use_docker:
+                    docker_stop(new_container_id)
+                else:
+                    from app.model_runner import stop_model_process
+                    stop_model_process(new_container_id)
+            except:
+                pass
+
+        # Restart previous version if it was active
+        if current_active:
+            _, current_container_id, current_port, current_image, current_folder = current_active
+            try:
+                if use_docker:
+                    restarted = docker_run(current_image, current_port, f"/m/{model_id}_v{current_version}")
+                else:
+                    from app.model_runner import start_model_process
+                    proc = start_model_process(current_folder, current_port)
+                    restarted = f"process-{proc.pid}"
+                
+                # Restore previous state in DB
+                cur.execute("""
+                UPDATE versions SET status='RUNNING', container_id=?, is_active=1
+                WHERE model_id=? AND version=?
+                """, (restarted, model_id, current_version))
+                conn.commit()
+                refresh_nginx()
+            except Exception as restart_err:
+                print(f"Failed to restart previous version: {restart_err}")
+
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Rollback failed: {str(e)}. Previous version restored.")
+
+    # Update DB: deactivate all versions, activate selected
     cur.execute("""
-    UPDATE versions SET status='STOPPED'
-    WHERE model_id=? AND status='RUNNING'
+    UPDATE versions SET is_active=0, status='STOPPED'
+    WHERE model_id=? AND is_active=1
     """, (model_id,))
 
     cur.execute("""
-    UPDATE versions SET status='RUNNING', container_id=?, internal_port=?
+    UPDATE versions SET status='RUNNING', container_id=?, internal_port=?, is_active=1
     WHERE model_id=? AND version=?
-    """, (container_id, port, model_id, version))
+    """, (new_container_id, port, model_id, version))
 
     cur.execute("""
     UPDATE models SET active_version=? WHERE model_id=?
@@ -422,14 +640,21 @@ def rollback(model_id: str, version: int):
     conn.close()
 
     refresh_nginx()
-    endpoint_predict = f"{PUBLIC_BASE_URL}/m/{route_key}/predict"
+
+    endpoint_predict = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/predict"
+    endpoint_docs = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/docs"
+
+    print(f"[ROLLBACK] Model {model_id} rolled back to version {version}")
     print(f"Generated endpoint: {endpoint_predict}")
     print(f"Port mapping: {route_key} -> {port}")
 
     return {
         "model_id": model_id,
-        "active_version": version,
-        "endpoint_predict": endpoint_predict
+        "rolled_back_to": version,
+        "status": "success",
+        "previous_version": current_active[0] if current_active else None,
+        "endpoint_predict": endpoint_predict,
+        "endpoint_docs": endpoint_docs
     }
 @app.get("/models")
 def list_models():
@@ -462,7 +687,7 @@ def list_versions(model_id: str):
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT version, status, image_tag, internal_port, created_at, error_log
+    SELECT version, status, image_tag, internal_port, created_at, error_log, is_active
     FROM versions
     WHERE model_id=?
     ORDER BY version DESC
@@ -471,14 +696,15 @@ def list_versions(model_id: str):
     conn.close()
 
     versions = []
-    for v, status, tag, port, created_at, error_log in rows:
+    for v, status, tag, port, created_at, error_log, is_active in rows:
         versions.append({
             "version": v,
             "status": status,
             "image_tag": tag,
             "port": port,
             "created_at": created_at,
-            "error_log": error_log
+            "error_log": error_log,
+            "is_active": bool(is_active)
         })
 
     return {"model_id": model_id, "versions": versions}
@@ -502,7 +728,7 @@ def control_predict(model_id: str, req: dict):
     version = row[0]
 
     cur.execute("""
-    SELECT internal_port, status
+    SELECT internal_port, is_active
     FROM versions
     WHERE model_id=? AND version=?
     """, (model_id, version))
@@ -512,10 +738,10 @@ def control_predict(model_id: str, req: dict):
         conn.close()
         raise HTTPException(status_code=404, detail="Active version not found")
 
-    port, status = row
-    if status != "RUNNING":
+    port, is_active = row
+    if not is_active:
         conn.close()
-        raise HTTPException(status_code=400, detail="Active model is not RUNNING")
+        raise HTTPException(status_code=400, detail="Active model is not running")
 
     # proxy request
     import time
@@ -587,10 +813,10 @@ def delete_model(model_id: str):
     conn = get_conn()
     cur = conn.cursor()
 
-    # stop running container if exists
+    # stop active container if exists
     cur.execute("""
     SELECT container_id FROM versions
-    WHERE model_id=? AND status='RUNNING'
+    WHERE model_id=? AND is_active=1
     """, (model_id,))
     row = cur.fetchone()
 

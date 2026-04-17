@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# Use mirror registry for faster pulls in regions with limited Docker Hub access
+FROM docker.mirrors.ustc.edu.cn/library/python:3.11-slim
 
 WORKDIR /app
 

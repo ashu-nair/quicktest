@@ -2,13 +2,38 @@ import subprocess
 import random
 import socket
 import os
+from pathlib import Path
 
+# Auto-detect Docker on Windows
 DOCKER_BIN = os.getenv("DOCKER_BIN", "docker")
+
+# Try to find Docker Desktop on Windows if not in PATH
+def find_docker():
+    global DOCKER_BIN
+    if os.name == 'nt':  # Windows
+        # Common Docker Desktop paths
+        possible_paths = [
+            Path("C:/Program Files/Docker/Docker/resources/bin/docker.exe"),
+            Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / "Docker/Docker/resources/bin/docker.exe",
+            Path(os.environ.get('LOCALAPPDATA', '')) / "Docker/Docker/resources/bin/docker.exe",
+        ]
+        for path in possible_paths:
+            if path.exists():
+                DOCKER_BIN = str(path)
+                return
+        # Try to find in PATH
+        import shutil
+        docker_in_path = shutil.which("docker")
+        if docker_in_path:
+            DOCKER_BIN = docker_in_path
+
+find_docker()
 
 
 def run(cmd, cwd=None):
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        # On Windows, use shell=False to avoid special character interpretation
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, shell=False)
     except FileNotFoundError as e:
         raise RuntimeError(
             f"Docker binary not found: {cmd[0]}. "
@@ -27,6 +52,14 @@ def get_free_port():
 
 
 def docker_build(build_path: str, image_tag: str):
+    # First check if Docker is available
+    version_code, _, version_err = run([DOCKER_BIN, "version"])
+    if version_code != 0:
+        raise RuntimeError(
+            f"Docker not available: {version_err}\n"
+            "Please ensure Docker Desktop is installed and running."
+        )
+    
     code, out, err = run([DOCKER_BIN, "build", "-t", image_tag, "."], cwd=build_path)
     if code != 0:
         raise RuntimeError(f"Docker build failed:\n{err}")

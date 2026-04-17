@@ -5,7 +5,11 @@ DB_PATH = Path("mlops.db")
 
 
 def get_conn():
-    return sqlite3.connect(DB_PATH)
+    # Use 30 second timeout to avoid database locked errors
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
 def init_db():
@@ -53,6 +57,13 @@ def init_db():
     if "model_name" not in model_columns:
         cur.execute("ALTER TABLE models ADD COLUMN model_name TEXT")
 
+    # Migration: add is_active column to versions table
+    cur.execute("PRAGMA table_info(versions)")
+    version_columns = {row[1] for row in cur.fetchall()}
+    if "is_active" not in version_columns:
+        cur.execute("ALTER TABLE versions ADD COLUMN is_active INTEGER DEFAULT 0")
+        # Initialize is_active based on status='RUNNING'
+        cur.execute("UPDATE versions SET is_active = 1 WHERE status = 'RUNNING'")
 
     conn.commit()
     conn.close()
