@@ -58,6 +58,18 @@ def start_model_process(model_folder: str, port: int):
     )
     
     print(f"Model process started with PID: {process.pid}")
+    
+    # Wait a moment and check if process crashed immediately
+    import time
+    time.sleep(0.5)
+    process.poll()
+    if process.returncode is not None:
+        stdout, stderr = process.communicate()
+        print(f"❌ Process crashed immediately! Exit code: {process.returncode}")
+        print(f"STDOUT: {stdout.decode()[:500]}")
+        print(f"STDERR: {stderr.decode()[:500]}")
+        raise RuntimeError(f"Model process failed to start: {stderr.decode()[:200]}")
+    
     return process
 
 

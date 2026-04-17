@@ -389,8 +389,16 @@ def deploy(model_id: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Run failed: {str(e)}")
     else:
-        # === SUBPROCESS MODE (Azure deployment) ===
+        # === SUBPROCESS MODE (Azure/EC2 deployment) ===
         print("Docker not available, using subprocess mode")
+        
+        # Use simpler model API for Python 3.7 compatibility
+        app_dir = deployment_folder / "app"
+        if (app_dir / "main_simple.py").exists():
+            # Replace main.py with simple version
+            shutil.copy(app_dir / "main.py", app_dir / "main_backup.py")
+            shutil.copy(app_dir / "main_simple.py", app_dir / "main.py")
+            print("Using simplified model API for Python 3.7 compatibility")
         
         # Verify model files exist before starting
         import os
