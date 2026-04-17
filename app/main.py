@@ -39,9 +39,14 @@ def start_ngrok_tunnel():
         return PUBLIC_BASE_URL
     
     try:
-        # Kill any existing ngrok processes first
+        # Kill any existing ngrok processes first (Windows only)
         import subprocess
-        subprocess.run(["taskkill", "/F", "/IM", "ngrok.exe"], capture_output=True)
+        import platform
+        if platform.system() == "Windows":
+            subprocess.run(["taskkill", "/F", "/IM", "ngrok.exe"], capture_output=True)
+        else:
+            # Linux/Mac - use pkill
+            subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
 
         # Check for authtoken in environment variable first
         import os
