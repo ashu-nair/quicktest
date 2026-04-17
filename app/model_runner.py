@@ -50,6 +50,14 @@ def start_model_process(model_folder: str, port: int):
     import sys
     env["PYTHONPATH"] = os.pathsep.join(sys.path)
     
+    # Auto-install required packages if missing
+    # This ensures model subprocess has all dependencies
+    print("📦 Checking/installing dependencies...")
+    import subprocess as sp
+    # Install/upgrade to latest for model compatibility
+    sp.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "numpy", "scikit-learn", "joblib"], 
+           capture_output=True)
+    
     # Start the model API as a subprocess with unbuffered output
     process = subprocess.Popen(
         [sys.executable, "-u", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", f"--port", str(port)],

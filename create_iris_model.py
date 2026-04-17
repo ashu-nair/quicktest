@@ -1,6 +1,9 @@
 """
 Create a test Iris classification model for MLOps platform testing.
 Run this to generate iris_model.zip
+
+IMPORTANT: Use numpy==1.21.6 to match EC2 deployment environment:
+  pip install numpy==1.21.6 scikit-learn==1.0.2
 """
 import joblib
 import json
