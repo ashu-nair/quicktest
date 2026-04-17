@@ -10,14 +10,10 @@ app = FastAPI(title="MLOps Model API", version="1.0", docs_url=None, redoc_url=N
 
 # Load model on startup
 MODEL = None
-# Get model path from environment or use current directory
-model_path_str = os.getenv("MODEL_PATH", "model")
-if not model_path_str.startswith("/"):
-    # Convert relative path to absolute based on script location
-    script_dir = Path(__file__).parent.absolute()
-    model_dir = script_dir.parent / model_path_str
-else:
-    model_dir = Path(model_path_str)
+# Always use absolute path based on script location
+# The model is in ../model/ relative to this script (in app/)
+script_dir = Path(__file__).parent.absolute()  # .../deployments/XXX_v1/app/
+model_dir = script_dir.parent / "model"  # .../deployments/XXX_v1/model/
 MODEL_PATH = model_dir / "model.pkl"
 
 @app.on_event("startup")

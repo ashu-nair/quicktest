@@ -45,7 +45,6 @@ def start_model_process(model_folder: str, port: int):
     
     # Set environment variables
     env = os.environ.copy()
-    env["MODEL_PATH"] = str(model_path / "model")
     env["PORT"] = str(port)
     
     # Start the model API as a subprocess with unbuffered output
