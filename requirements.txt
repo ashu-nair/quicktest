@@ -1,8 +1,9 @@
 fastapi
 uvicorn
+python-multipart
 requests
 numpy
 scikit-learn
 joblib
-# Optional: For local development with ngrok (not needed on Azure)
+# Optional: For local development with ngrok (not needed on cloud)
 pyngrok
