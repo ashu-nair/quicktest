@@ -54,8 +54,10 @@ def start_model_process(model_folder: str, port: int):
     # This ensures model subprocess has all dependencies
     print("📦 Checking/installing dependencies...")
     import subprocess as sp
-    # Install/upgrade to latest for model compatibility
-    sp.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "numpy", "scikit-learn", "joblib"], 
+    # Force reinstall to ensure we get working versions
+    # Use --user for EC2 permission compatibility
+    sp.run([sys.executable, "-m", "pip", "install", "-q", "--user", "--force-reinstall", 
+            "numpy==1.24.3", "scikit-learn==1.3.0", "joblib"], 
            capture_output=True)
     
     # Start the model API as a subprocess with unbuffered output
