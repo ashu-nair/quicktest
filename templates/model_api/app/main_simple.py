@@ -10,6 +10,7 @@ app = FastAPI(title="MLOps Model API", version="1.0", docs_url=None, redoc_url=N
 
 # Load model on startup
 MODEL = None
+MODEL_LOAD_ERROR = None
 # Always use absolute path based on script location
 # The model is in ../model/ relative to this script (in app/)
 script_dir = Path(__file__).parent.absolute()  # .../deployments/XXX_v1/app/
@@ -18,7 +19,7 @@ MODEL_PATH = model_dir / "model.pkl"
 
 @app.on_event("startup")
 def startup():
-    global MODEL
+    global MODEL, MODEL_LOAD_ERROR
     print(f"🔍 Looking for model at: {MODEL_PATH}")
     print(f"📁 Model file exists: {MODEL_PATH.exists()}")
     
@@ -37,6 +38,7 @@ def startup():
         MODEL = joblib.load(MODEL_PATH)
         print(f"✅ Model loaded successfully! Type: {type(MODEL).__name__}")
     except Exception as e:
+        MODEL_LOAD_ERROR = str(e)
         print(f"❌ Failed to load model: {e}")
         import traceback
         traceback.print_exc()
@@ -61,6 +63,7 @@ def root():
 @app.get("/test")
 def test():
     """Test endpoint - returns model info and a test prediction"""
+    global MODEL_LOAD_ERROR
     if MODEL is None:
         # Debug info - list what's in deployment folder
         debug_info = {
@@ -69,6 +72,7 @@ def test():
             "model_path_exists": MODEL_PATH.exists(),
             "model_dir": str(MODEL_PATH.parent),
             "model_dir_exists": MODEL_PATH.parent.exists(),
+            "load_error": MODEL_LOAD_ERROR if 'MODEL_LOAD_ERROR' in globals() else "No error captured"
         }
         # List files if directory exists
         if MODEL_PATH.parent.exists():
