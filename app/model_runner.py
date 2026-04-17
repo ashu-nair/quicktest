@@ -36,20 +36,28 @@ def start_model_process(model_folder: str, port: int):
     model_path = Path(model_folder)
     app_path = model_path / "app"
     
+    print(f"Starting model process in: {app_path}")
+    print(f"Model path: {model_path / 'model'}")
+    print(f"Port: {port}")
+    
+    if not app_path.exists():
+        raise RuntimeError(f"App path does not exist: {app_path}")
+    
     # Set environment variables
     env = os.environ.copy()
     env["MODEL_PATH"] = str(model_path / "model")
     env["PORT"] = str(port)
     
-    # Start the model API as a subprocess
+    # Start the model API as a subprocess with unbuffered output
     process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", f"--port", str(port)],
+        [sys.executable, "-u", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", f"--port", str(port)],
         cwd=str(app_path),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     
+    print(f"Model process started with PID: {process.pid}")
     return process
 
 
