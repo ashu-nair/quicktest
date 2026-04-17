@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 import os
 
-app = FastAPI()
+app = FastAPI(title="MLOps Model API", version="1.0")
 
 # Load model on startup
 MODEL = None
@@ -23,6 +23,29 @@ def startup():
 @app.get("/health")
 def health():
     return {"status": "ok", "model_loaded": MODEL is not None}
+
+@app.get("/")
+def root():
+    return {
+        "service": "MLOps Model API",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "docs": "/docs",
+            "predict": "POST /predict with JSON body: {\"features\": [1,2,3]}"
+        }
+    }
+
+@app.get("/predict")
+def predict_get():
+    return {
+        "message": "Use POST method to make predictions",
+        "example": {
+            "method": "POST",
+            "url": "/predict",
+            "body": {"features": [1.0, 2.0, 3.0, 4.0]}
+        }
+    }
 
 @app.post("/predict")
 def predict(data: dict):
