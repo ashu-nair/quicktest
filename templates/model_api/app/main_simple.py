@@ -62,7 +62,23 @@ def root():
 def test():
     """Test endpoint - returns model info and a test prediction"""
     if MODEL is None:
-        return {"error": "Model not loaded", "model_path": str(MODEL_PATH)}
+        # Debug info - list what's in deployment folder
+        debug_info = {
+            "error": "Model not loaded",
+            "model_path": str(MODEL_PATH),
+            "model_path_exists": MODEL_PATH.exists(),
+            "model_dir": str(MODEL_PATH.parent),
+            "model_dir_exists": MODEL_PATH.parent.exists(),
+        }
+        # List files if directory exists
+        if MODEL_PATH.parent.exists():
+            debug_info["files_in_model_dir"] = [f.name for f in MODEL_PATH.parent.iterdir()]
+        else:
+            # Check parent directory
+            parent = MODEL_PATH.parent.parent
+            if parent.exists():
+                debug_info["files_in_deployment_dir"] = [f.name for f in parent.iterdir()]
+        return debug_info
     
     # Try a test prediction with dummy data
     try:
