@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from app.db import init_db, get_conn
 from app.docker_runner import docker_build, docker_run, docker_stop, get_free_port
 from app.nginx_manager import write_routes, can_manage_nginx
-from app.config import IS_AZURE, USE_NGROK, PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL
+from app.config import IS_AZURE, IS_EC2, USE_NGROK, PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL
 from fastapi.middleware.cors import CORSMiddleware
 
 # ngrok integration (only for local development)
@@ -32,9 +32,14 @@ def start_ngrok_tunnel():
     """
     global GLOBAL_PUBLIC_URL
     
-    # Skip ngrok on Azure or if explicitly disabled
+    # Skip ngrok on cloud environments
     if not USE_NGROK or ngrok is None:
-        print(f"📡 Running on Azure: {PUBLIC_BASE_URL}")
+        if IS_EC2:
+            print(f"📡 Running on EC2: {PUBLIC_BASE_URL}")
+        elif IS_AZURE:
+            print(f"📡 Running on Azure: {PUBLIC_BASE_URL}")
+        else:
+            print(f"📡 Running locally: {PUBLIC_BASE_URL}")
         GLOBAL_PUBLIC_URL = PUBLIC_BASE_URL
         return PUBLIC_BASE_URL
     
@@ -499,9 +504,11 @@ def deploy(model_id: str):
     except Exception as e:
       print("⚠️ Nginx refresh failed:", e)
 
-    endpoint_predict = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/predict"
-    endpoint_docs = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/docs"
-    endpoint_health = f"{GLOBAL_PUBLIC_URL}/m/{route_key}/health"
+    # Get fresh public URL from config (may have been updated with EC2 IP)
+    from app.config import PUBLIC_BASE_URL as CURRENT_PUBLIC_URL
+    endpoint_predict = f"{CURRENT_PUBLIC_URL}/m/{route_key}/predict"
+    endpoint_docs = f"{CURRENT_PUBLIC_URL}/m/{route_key}/docs"
+    endpoint_health = f"{CURRENT_PUBLIC_URL}/m/{route_key}/health"
     print(f"Generated endpoint: {endpoint_predict}")
     print(f"Port mapping: {route_key} -> {port}")
     if can_manage_nginx():
@@ -779,7 +786,10 @@ async def proxy_model_endpoint(model_id: str, version: int, path: str, request: 
         if method == "GET":
             r = requests.get(target_url, timeout=10)
         elif method == "POST":
-            body = await request.json() if await request.body() else {}
+            try:
+                body = await request.json()
+            except:
+                body = {}
             r = requests.post(target_url, json=body, timeout=10)
         else:
             r = requests.request(method, target_url, timeout=10)
