@@ -3,8 +3,8 @@ uvicorn
 python-multipart
 urllib3<2.0
 requests
-numpy
-scikit-learn
+numpy==1.21.6
+scikit-learn==1.0.2
 joblib
 # Optional: For local development with ngrok (not needed on cloud)
 pyngrok

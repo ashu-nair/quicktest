@@ -46,6 +46,9 @@ def start_model_process(model_folder: str, port: int):
     # Set environment variables
     env = os.environ.copy()
     env["PORT"] = str(port)
+    # Ensure Python path includes site-packages for imports
+    import sys
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
     
     # Start the model API as a subprocess with unbuffered output
     process = subprocess.Popen(
