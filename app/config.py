@@ -16,8 +16,19 @@ elif IS_CLOUDSHELL:
     # CloudShell uses localhost with port forwarding
     PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'http://localhost:8000')
 elif IS_EC2:
-    # EC2 - use public IP if available
-    PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'http://localhost:8000')
+    # EC2 - try to get public IP from metadata service or use localhost
+    ec2_ip = os.getenv('PUBLIC_BASE_URL')
+    if not ec2_ip:
+        try:
+            import urllib.request
+            # Try to get public IP from EC2 metadata service
+            req = urllib.request.Request('http://169.254.169.254/latest/meta-data/public-ipv4', timeout=2)
+            with urllib.request.urlopen(req) as response:
+                public_ip = response.read().decode()
+                ec2_ip = f"http://{public_ip}:8000"
+        except:
+            ec2_ip = 'http://localhost:8000'
+    PUBLIC_BASE_URL = ec2_ip
 else:
     PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'http://localhost:8000')
 
