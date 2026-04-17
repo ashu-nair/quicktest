@@ -19,11 +19,27 @@ MODEL_PATH = model_dir / "model.pkl"
 @app.on_event("startup")
 def startup():
     global MODEL
+    print(f"🔍 Looking for model at: {MODEL_PATH}")
+    print(f"📁 Model file exists: {MODEL_PATH.exists()}")
+    
+    if not MODEL_PATH.exists():
+        # List what's in the model directory
+        model_parent = MODEL_PATH.parent
+        print(f"📂 Contents of {model_parent}:")
+        if model_parent.exists():
+            for f in model_parent.iterdir():
+                print(f"  - {f.name}")
+        else:
+            print(f"  Directory doesn't exist!")
+        return
+    
     try:
         MODEL = joblib.load(MODEL_PATH)
-        print(f"✅ Model loaded from {MODEL_PATH}")
+        print(f"✅ Model loaded successfully! Type: {type(MODEL).__name__}")
     except Exception as e:
         print(f"❌ Failed to load model: {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/health")
 def health():

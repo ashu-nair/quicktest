@@ -60,14 +60,14 @@ def start_model_process(model_folder: str, port: int):
     
     # Wait a moment and check if process crashed immediately
     import time
-    time.sleep(0.5)
+    time.sleep(1)  # Give it more time to start
     process.poll()
     if process.returncode is not None:
         stdout, stderr = process.communicate()
         print(f"❌ Process crashed immediately! Exit code: {process.returncode}")
-        print(f"STDOUT: {stdout.decode()[:500]}")
-        print(f"STDERR: {stderr.decode()[:500]}")
-        raise RuntimeError(f"Model process failed to start: {stderr.decode()[:200]}")
+        print(f"STDOUT: {stdout.decode()[:1000]}")
+        print(f"STDERR: {stderr.decode()[:1000]}")
+        raise RuntimeError(f"Model process failed to start: {stderr.decode()[:500]}")
     
     return process
 
