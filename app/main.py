@@ -391,6 +391,13 @@ def deploy(model_id: str):
     else:
         # === SUBPROCESS MODE (Azure deployment) ===
         print("Docker not available, using subprocess mode")
+        
+        # Verify model files exist before starting
+        import os
+        model_pkl_path = os.path.join(str(deployment_folder), "model", "model.pkl")
+        if not os.path.exists(model_pkl_path):
+            raise HTTPException(status_code=500, detail=f"Model file not found at {model_pkl_path}")
+        
         from app.model_runner import start_model_process
         try:
             process = start_model_process(str(deployment_folder), port)
@@ -399,21 +406,36 @@ def deploy(model_id: str):
             raise HTTPException(status_code=500, detail=f"Process start failed: {str(e)}")
 
     # test model endpoint
-        # test model endpoint (retry because container may take time to start)
+    # test model endpoint (retry because container may take time to start)
+    import time
     url = f"http://127.0.0.1:{port}/health"
     ok = False
     last_err = ""
 
-    for _ in range(15):  # ~15 seconds
+    # Wait longer for subprocess to start (especially on slower EC2 t2.micro)
+    print(f"Waiting for model to start on port {port}...")
+    
+    # Check if process is still running
+    if not use_docker:
+        process.poll()
+        if process.returncode is not None:
+            # Process already exited, capture error
+            stdout, stderr = process.communicate()
+            error_msg = f"Process exited with code {process.returncode}. stderr: {stderr.decode()[:500]}"
+            print(error_msg)
+            raise HTTPException(status_code=500, detail=f"Model process failed to start: {error_msg}")
+
+    for i in range(20):  # ~20 seconds (increased from 15)
         try:
             r = requests.get(url, timeout=2)
             if r.status_code == 200:
+                print(f"✅ Model health check passed after {i+1} seconds")
                 ok = True
                 break
         except Exception as e:
             last_err = str(e)
+            print(f"Attempt {i+1}/20: {last_err[:100]}")
 
-        import time
         time.sleep(1)
 
     if not ok:
