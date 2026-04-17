@@ -745,6 +745,50 @@ def list_versions(model_id: str):
     return {"model_id": model_id, "versions": versions}
 
 
+# Proxy routes for deployed model endpoints (when nginx is not available)
+from fastapi import Request
+
+@app.api_route("/m/{model_id}_v{version}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_model_endpoint(model_id: str, version: int, path: str, request: Request):
+    """
+    Proxy requests to deployed model containers/processes.
+    Routes /m/{model_id}_v{version}/* to the internal model port.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Find the port for this model version
+    cur.execute("""
+    SELECT internal_port, status FROM versions
+    WHERE model_id=? AND version=? AND status='RUNNING'
+    """, (model_id, version))
+    row = cur.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} v{version} not found or not running")
+    
+    port, status = row
+    
+    # Build target URL
+    target_url = f"http://127.0.0.1:{port}/{path}"
+    
+    # Proxy the request
+    try:
+        method = request.method
+        if method == "GET":
+            r = requests.get(target_url, timeout=10)
+        elif method == "POST":
+            body = await request.json() if await request.body() else {}
+            r = requests.post(target_url, json=body, timeout=10)
+        else:
+            r = requests.request(method, target_url, timeout=10)
+        
+        return r.json() if r.headers.get('content-type', '').startswith('application/json') else {"response": r.text}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Proxy error: {str(e)}")
+
+
 @app.post("/predict/{model_id}")
 def control_predict(model_id: str, req: dict):
     """
